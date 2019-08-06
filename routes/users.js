@@ -1,6 +1,8 @@
 var express = require('express');
 var router = express.Router();
 const User = require('../model/user');
+var geoip = require('geoip-lite');
+//var Promise = require('promise');
 var getRandomInt = (min, max) => {
     min = Math.ceil(min);
     max = Math.floor(max);
@@ -139,11 +141,51 @@ router.post('/getUserData', function(req, res, next) {
         return res.status(200).json({ status: false, message: 'req body error' });
     }
     User.findOne({ 'baseDomain': url }, (err, user) => {
+
         if (err)
             return res.status(200).json({ status: false, message: 'error in searching user' });
         if (user) {
-            delete user.secretKey;
-            res.status(200).json({ status: true, message: 'user found', data: user });
+            var data = {
+                'email': user.email,
+                'baseDomain': user.baseDomain,
+                'paths': []
+            }
+            var promises = [];
+            if (user.paths.length > 0) {
+                user.paths.forEach(x => {
+                    Object.keys(x.visitors).forEach(function(ip, index) {
+                        //console.log('ip', ip);
+                        promises.push(new Promise((resolve, reject) => {
+                            resolve({ 'path': x.path, 'ip': ip, 'geoInfo': geoip.lookup(ip) });
+                        }));
+                    });
+                });
+                Promise.all(promises).then(result => {
+                    user.paths.forEach(x => {
+                        var tempPath = {
+                            'path': x.path,
+                            'totalVisitorCount': x.totalVisitorCount,
+                            'visitors': []
+                        }
+                        result.forEach(y => {
+                            //console.log('geo ', y.geoInfo);
+                            if (x.path == y.path) {
+                                var tempVisitor = {
+                                    'ip': y.ip,
+                                    'count': x.visitors[y.ip],
+                                    'geoInfo': y.geoInfo
+                                }
+                                tempPath.visitors.push(tempVisitor);
+                            }
+                        });
+                        data.paths.push(tempPath);
+                    });
+                    return res.status(200).json({ status: true, message: 'user found', data: data });
+                });
+            }
+            //return res.status(200).json({ status: true, message: 'user found', data: data });
+
+
 
         } else {
             res.status(200).json({ status: false, message: 'user not exist' });
